@@ -1,3 +1,6 @@
+-- SPDX-FileCopyrightText: 2020 Samuel Hulme <https://github.com/samuelh2005>
+-- SPDX-License-Identifier: MPL-2.0
+
 --CCbrowser 1.0.0 by SamH
 
 
@@ -34,6 +37,8 @@ function reload(file)
 	--gpage = "http://apple.com/"
 	gpage = "http://81.110.170.100/cc/"	
 	--gpage = "http://81.110.170.100/"	
+
+	-- HTML PARSER: Source unknown but modified by Samuel Hulme
 
 	-- Determines if the file exists, and can be edited on this computer
 	page = {}
