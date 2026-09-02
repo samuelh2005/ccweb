@@ -1,8 +1,6 @@
 print("CC Web Browser Installer")
 print("")
-print("This Source Code Form is subject to the terms of the Mozilla Public")
-print("License, v. 2.0. If a copy of the MPL was not distributed with this")
-print("file, You can obtain one at https://mozilla.org/MPL/2.0/.")
+print("This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.")
 print("")
 
 local packages = {
@@ -25,7 +23,10 @@ repeat
     if num and num >= 1 and num <= #packages then
         choice = num
     else
-        print("Invalid choice. Please enter a number between 1 and " .. #packages)
+        for i, pkg in ipairs(packages) do
+            print(i .. ". " .. pkg.name)
+        end
+        print("Invalid choice. Please chose a valid package number.")
     end
 until choice and packages[choice]
 
@@ -35,7 +36,7 @@ print("Installing " .. selectedPackage.name .. "...")
 local success, err = pcall(function()
     local response = http.get(selectedPackage.url)
     if not response then
-        error("Failed to download package. Please check your internet connection.")
+        error("Failed to download package. Please check your HTTP settings.")
     end
 
     local content = response.readAll()
