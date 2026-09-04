@@ -7,6 +7,9 @@ This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 --]]
+
+local tArgs = { ... }
+
 local core = {}
 
 core.logs = {}
@@ -43,6 +46,36 @@ core.consoleLog = function(status, msg)
             ["message"] = msg
         }
     )
+end
+
+core.editValue = function(currentValue, prompt)
+    local w, h = term.getSize()
+    local dialogW = math.min(30, w - 4)
+
+    local dialogH = 5
+
+    local x = math.floor((w - dialogW) / 2) + 1
+    local y = math.floor((h - dialogH) / 2) + 1
+
+    term.setBackgroundColour(colors.gray)
+    term.setTextColour(colors.white)
+
+    for row = 0, dialogH - 1 do
+        term.setCursorPos(x, y + row)
+        term.write(string.rep(" ", dialogW))
+    end
+
+    term.setCursorPos(x + 2, y + 1)
+    term.write(prompt)
+    term.setCursorPos(x + 2, y + 2)
+
+    local newValue = read()
+
+    if newValue ~= "" then
+        return newValue
+    end
+
+    return currentValue
 end
 
 ----------------------------------------------------------------
@@ -301,7 +334,9 @@ function ContentFrame:render()
     self:refreshContentLines()
 
     self.contentWindow.setBackgroundColour(colors.white)
+
     self.contentWindow.setTextColour(colors.black)
+
     self.contentWindow.setCursorPos(1, 1)
     self.contentWindow.clear()
 
@@ -310,8 +345,11 @@ function ContentFrame:render()
 
         if line then
             self.contentWindow.setBackgroundColour(line.backgroundColor)
+
             self.contentWindow.setTextColour(line.textColor)
+
             self.contentWindow.setCursorPos(1, row)
+
             self.contentWindow.clearLine()
             self.contentWindow.write(line.text)
         end
@@ -408,143 +446,13 @@ function ContentFrame:handleEvent(event, p1, p2, p3)
     return false
 end
 
-----------------------------------------------------------------
--- Browser state
-----------------------------------------------------------------
-
-local defaultTheme = {
-    ["body"] = {
-        ["text-color"] = "black",
-        ["background-color"] = "white"
-    }
-}
-
-local w, h = term.getSize()
-local currentTheme = defaultTheme
-
-local url = "about:blank"
-local loading = false
-
-local contentFrame = ContentFrame.new(term.current(), 1, 2, w - 1, h - 2)
-
-----------------------------------------------------------------
--- Browser content
---
--- These functions translate application data into line objects.
--- ContentFrame itself remains unaware of what those lines mean.
-----------------------------------------------------------------
-
-local function displayLogs()
-    contentFrame:clearLines()
-
-    for _, err in ipairs(core.logs) do
-        contentFrame:pushLine(
-            {
-                text = "[" .. err.status .. "]: " .. err.message,
-                textColor = colors.red,
-                backgroundColor = colors.white
-            }
-        )
-    end
-
-    contentFrame:scrollToTop()
-end
-
-----------------------------------------------------------------
--- Page parsing
-----------------------------------------------------------------
-
-local function displayPage(content)
-    if not content then
-        core.consoleLog("error", "No content to display")
-        return false
-    end
-
-    local json, err = textutils.unserialiseJSON(content)
-
-    if not json then
-        core.consoleLog("error", "Failed to parse JSON: " .. err)
-        return false
-    end
-
-    local body, ok, bodyErr = core.checkVal(json["body"], "table", {})
-
-    if not ok then
-        core.consoleLog("error", "Failed to check body: " .. bodyErr)
-        return false
-    end
-
-    -- The parsed document does not need to be stored anywhere.
-    -- Its elements are translated straight into ContentFrame
-    -- line objects.
-    contentFrame:clearLines()
-
-    for _, element in ipairs(body) do
-        local elementType, typeOK, typeErr = core.checkVal(element["type"], "string", nil)
-
-        if not typeOK then
-            core.consoleLog("error", "Failed to check element type: " .. typeErr)
-        elseif elementType == "text" then
-            local text, textOK, textErr = core.checkVal(element["text"], "string", "")
-
-            if not textOK then
-                core.consoleLog("error", "Failed to check text element: " .. textErr)
-            else
-                contentFrame:pushLine(
-                    {
-                        text = text,
-                        textColor = colors.black,
-                        backgroundColor = colors.white
-                    }
-                )
-            end
-        end
-    end
-
-    contentFrame:scrollToTop()
-
-    return true
-end
-
-----------------------------------------------------------------
--- URL editor
-----------------------------------------------------------------
-
-local function editValue(currentValue, prompt)
-    local dialogW = math.min(30, w - 4)
-
-    local dialogH = 5
-
-    local x = math.floor((w - dialogW) / 2) + 1
-
-    local y = math.floor((h - dialogH) / 2) + 1
-
-    term.setBackgroundColour(colors.gray)
-    term.setTextColour(colors.white)
-
-    for row = 0, dialogH - 1 do
-        term.setCursorPos(x, y + row)
-        term.write(string.rep(" ", dialogW))
-    end
-
-    term.setCursorPos(x + 2, y + 1)
-    term.write(prompt)
-    term.setCursorPos(x + 2, y + 2)
-
-    local newValue = read()
-
-    if newValue ~= "" then
-        return newValue
-    end
-
-    return currentValue
-end
+local network = {}
 
 ----------------------------------------------------------------
 -- GET
 ----------------------------------------------------------------
 
-local function GET(sourceUrl)
+network.GET = function(sourceUrl)
     if core.startsWith(sourceUrl, "file://") then
         local fileName = shell.resolve(core.stripPrefix(sourceUrl, "file://"))
 
@@ -613,6 +521,154 @@ local function GET(sourceUrl)
     return false
 end
 
+local browser = {}
+
+----------------------------------------------------------------
+-- Browser state
+----------------------------------------------------------------
+
+browser.defaultTheme = {
+    ["body"] = {
+        ["text-color"] = "black",
+        ["background-color"] = "white"
+    }
+}
+
+browser.w, browser.h = term.getSize()
+browser.currentTheme = browser.defaultTheme
+
+browser.url = "about:blank"
+
+if tArgs[1] then
+    browser.url = tArgs[1]
+end
+
+browser.loading = false
+
+browser.contentFrame = ContentFrame.new(term.current(), 1, 2, browser.w - 1, browser.h - 2)
+
+----------------------------------------------------------------
+-- Browser content
+--
+-- These functions translate application data into line objects.
+-- ContentFrame itself remains unaware of what those lines mean.
+----------------------------------------------------------------
+
+browser.displayLogs = function()
+    browser.contentFrame:clearLines()
+
+    for _, err in ipairs(core.logs) do
+        browser.contentFrame:pushLine(
+            {
+                text = "[" .. err.status .. "]: " .. err.message,
+                textColor = colors.red,
+                backgroundColor = colors.white
+            }
+        )
+    end
+
+    browser.contentFrame:scrollToTop()
+end
+
+browser.navigate = function(url)
+    core.logs = {}
+
+    browser.contentFrame:clearLines()
+
+    browser.loading = true
+
+    browser.renderChrome()
+    browser.contentFrame:render()
+
+    if url == "about:blank" then
+        -- Tell the user how to use the browser when they first open it.
+        browser.contentFrame:pushLine(
+            {
+                text = "Welcome to CC Web Browser!",
+                textColor = colors.black,
+                backgroundColor = colors.white
+            }
+        )
+        browser.contentFrame:pushLine(
+            {
+                text = "Click the URL bar to enter a URL.",
+                textColor = colors.black,
+                backgroundColor = colors.white
+            }
+        )
+
+        browser.loading = false
+        return
+    end
+
+    local ok, response = network.GET(url)
+    browser.loading = false
+
+    if ok and response then
+        browser.displayPage(response.content)
+    end
+
+    if #core.logs > 0 then
+        browser.displayLogs()
+    end
+end
+
+----------------------------------------------------------------
+-- Page parsing
+----------------------------------------------------------------
+
+browser.displayPage = function(content)
+    if not content then
+        core.consoleLog("error", "No content to display")
+        return false
+    end
+
+    local json, err = textutils.unserialiseJSON(content)
+
+    if not json then
+        core.consoleLog("error", "Failed to parse JSON: " .. err)
+        return false
+    end
+
+    local body, ok, bodyErr = core.checkVal(json["body"], "table", {})
+
+    if not ok then
+        core.consoleLog("error", "Failed to check body: " .. bodyErr)
+        return false
+    end
+
+    -- The parsed document does not need to be stored anywhere.
+    -- Its elements are translated straight into ContentFrame
+    -- line objects.
+    browser.contentFrame:clearLines()
+
+    for _, element in ipairs(body) do
+        local elementType, typeOK, typeErr = core.checkVal(element["type"], "string", nil)
+
+        if not typeOK then
+            core.consoleLog("error", "Failed to check element type: " .. typeErr)
+        elseif elementType == "text" then
+            local text, textOK, textErr = core.checkVal(element["text"], "string", "")
+
+            if not textOK then
+                core.consoleLog("error", "Failed to check text element: " .. textErr)
+            else
+                browser.contentFrame:pushLine(
+                    {
+                        text = text,
+                        textColor = colors.black,
+                        backgroundColor = colors.white
+                    }
+                )
+            end
+        end
+    end
+
+    browser.contentFrame:scrollToTop()
+
+    return true
+end
+
 ----------------------------------------------------------------
 -- Browser chrome
 ----------------------------------------------------------------
@@ -620,7 +676,9 @@ end
 local function fillLine(y, bg, fg, text)
     term.setBackgroundColour(bg)
     term.setTextColour(fg)
+
     term.setCursorPos(1, y)
+
     term.clearLine()
 
     if text then
@@ -628,7 +686,7 @@ local function fillLine(y, bg, fg, text)
     end
 end
 
-local function renderChrome()
+browser.renderChrome = function()
     term.setBackgroundColour(colors.white)
     term.setTextColour(colors.black)
     term.clear()
@@ -641,8 +699,10 @@ local function renderChrome()
 
     term.setBackgroundColour(colors.gray)
     term.setTextColour(colors.white)
+
     term.setCursorPos(2, 1)
-    term.write(url)
+
+    term.write(browser.url)
 
     ------------------------------------------------------------
     -- Footer
@@ -650,17 +710,16 @@ local function renderChrome()
 
     local status = "Ready"
 
-    if loading then
+    if browser.loading then
         status = "Loading..."
     elseif #core.logs > 0 then
         status = "Error"
     end
 
-    fillLine(h, colors.lightGray, colors.black, status)
+    fillLine(browser.h, colors.lightGray, colors.black, status)
 end
 
-renderChrome()
-contentFrame:render()
+browser.navigate(browser.url)
 
 while true do
     local event, p1, p2, p3, p4, p5 = os.pullEventRaw()
@@ -676,7 +735,7 @@ while true do
     --   terminal resize
     ------------------------------------------------------------
 
-    local handled = contentFrame:handleEvent(event, p1, p2, p3)
+    local handled = browser.contentFrame:handleEvent(event, p1, p2, p3)
 
     if not handled then
         --------------------------------------------------------
@@ -684,28 +743,9 @@ while true do
         --------------------------------------------------------
 
         if event == "mouse_click" and p1 == 1 then
-            if p3 == 1 and p2 >= 2 and p2 <= #url + 1 then
-                url = editValue(url, "Enter URL:")
-
-                core.logs = {}
-
-                contentFrame:clearLines()
-
-                loading = true
-
-                renderChrome()
-                contentFrame:render()
-
-                local ok, response = GET(url)
-                loading = false
-
-                if ok and response then
-                    displayPage(response.content)
-                end
-
-                if #core.logs > 0 then
-                    displayLogs()
-                end
+            if p3 == 1 and p2 >= 2 and p2 <= #browser.url + 1 then
+                browser.url = core.editValue(browser.url, "Enter URL:")
+                browser.navigate(browser.url)
             end
         elseif event == "terminate" then
             term.setCursorPos(1, 1)
@@ -717,6 +757,7 @@ while true do
         end
     end
 
-    renderChrome()
-    contentFrame:render()
+
+    browser.renderChrome()
+    browser.contentFrame:render()
 end
