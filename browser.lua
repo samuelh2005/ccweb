@@ -459,16 +459,16 @@ end
 -- Page parsing
 ----------------------------------------------------------------
 
-local function preparePage(content)
+local function displayPage(content)
+    if not content then
+        core.consoleLog("error", "No content to display")
+        return false
+    end
+
     local json, err = textutils.unserialiseJSON(content)
 
     if not json then
         core.consoleLog("error", "Failed to parse JSON: " .. err)
-
-        loading = false
-
-        displayLogs()
-
         return false
     end
 
@@ -476,11 +476,6 @@ local function preparePage(content)
 
     if not ok then
         core.consoleLog("error", "Failed to check body: " .. bodyErr)
-
-        loading = false
-
-        displayLogs()
-
         return false
     end
 
@@ -510,8 +505,6 @@ local function preparePage(content)
             end
         end
     end
-
-    loading = false
 
     contentFrame:scrollToTop()
 
@@ -565,40 +558,34 @@ local function GET(sourceUrl)
 
         if not fs.exists(fileName) then
             core.consoleLog("error", "File not found: " .. fileName)
-
-            loading = false
-            return
+            return false
         end
 
         local file = fs.open(fileName, "r")
 
         if not file then
             core.consoleLog("error", "Failed to open file: " .. fileName)
-
-            loading = false
-            return
+            return false
         end
 
         local content = file.readAll()
 
         file.close()
 
-        if not content then
-            core.consoleLog("error", "Failed to read file: " .. fileName)
-
-            loading = false
-            return
+        if not content or #content == 0 then
+            core.consoleLog("error", "File is empty: " .. fileName)
+            return false
         end
 
-        return content
+        return true, {
+            content = content
+        }
     elseif core.startsWith(sourceUrl, "http://") or core.startsWith(sourceUrl, "https://") then
         local request = http.get(sourceUrl)
 
         if not request then
             core.consoleLog("error", "Failed to make HTTP request to: " .. sourceUrl)
-
-            loading = false
-            return
+            return false
         end
 
         local statusCode = request.getResponseCode()
@@ -615,20 +602,23 @@ local function GET(sourceUrl)
             else
                 core.consoleLog("error", content)
             end
-
-            loading = false
-            return
+            return false
         end
 
-        if not content then
-            core.consoleLog("error", "Failed to read HTTP response from: " .. sourceUrl)
-
-            loading = false
-            return
+        if not content or #content == 0 then
+            core.consoleLog("error", "HTTP response is empty for: " .. sourceUrl)
+            return false
         end
 
-        return content, statusCode, headers
+        return true, {
+            content = content,
+            statusCode = statusCode,
+            headers = headers
+        }
     end
+
+    core.consoleLog("error", "Unsupported URL scheme: " .. sourceUrl .. " Supported schemes are file://, http://, and https://")
+    return false
 end
 
 ----------------------------------------------------------------
@@ -718,11 +708,14 @@ while true do
                 renderChrome()
                 contentFrame:render()
 
-                local content = GET(url)
+                local ok, response = GET(url)
+                loading = false
 
-                if content then
-                    preparePage(content)
-                else
+                if ok and response then
+                    displayPage(response.content)
+                end
+
+                if #core.logs > 0 then
                     displayLogs()
                 end
             end
