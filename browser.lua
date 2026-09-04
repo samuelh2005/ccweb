@@ -8,39 +8,11 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at https://mozilla.org/MPL/2.0/.
 --]]
 
+local core = {}
 
-local defaultTheme = {
-    ["body"] = {
-        ["text-color"] = "black",
-        ["background-color"] = "white"
-    }
-}
+core.logs = {}
 
-local w, h = term.getSize()
-local currentTheme = defaultTheme
-
-local url = "about:blank"
-
-local contentWindow = window.create(term.current(), 1, 2, w - 1, h - 2)
-local screenContent = {}
-
-local loading = false
-local logs = {}
-
--- Scrolling state
-local scrollOffset = 0
-local contentLines = {} -- flattened, pre-wrapped lines: { text = ... }
-
--- Scrollbar hit-testing state, recomputed every render
-local scrollbarVisible = false
-local scrollbarTrackHeight = 0
-local scrollbarThumbHeight = 0
-local scrollbarThumbPos = 0
-local draggingScrollbar = false
-local dragGrabOffset = 0
-
-
-local function checkVal(value, arg_type, default)
+core.checkVal = function(value, arg_type, default)
     if value == nil then
         return default, false, "Value is nil"
     end
@@ -52,29 +24,18 @@ local function checkVal(value, arg_type, default)
     return value, true, nil
 end
 
-local function fillLine(y, bg, fg, text)
-    term.setBackgroundColour(bg)
-    term.setTextColour(fg)
-    term.setCursorPos(1, y)
-    term.clearLine()
-
-    if text then
-        term.write(text)
-    end
+core.startsWith = function(str, prefix)
+    return str:sub(1, #prefix) == prefix
 end
 
-local function consoleLog(status, msg)
-    table.insert(logs, {
+core.consoleLog = function(status, msg)
+    table.insert(core.logs, {
         ["status"] = status,
         ["message"] = msg
     })
 end
 
-local function startsWith(str, prefix)
-    return str:sub(1, #prefix) == prefix
-end
-
-local function wrapText(text, width)
+core.wrapText = function(text, width)
     local lines = {}
     local currentLine = ""
     local currentWidth = 0
@@ -99,13 +60,61 @@ local function wrapText(text, width)
     return lines
 end
 
+local defaultTheme = {
+    ["body"] = {
+        ["text-color"] = "black",
+        ["background-color"] = "white"
+    }
+}
+
+local w, h = term.getSize()
+local currentTheme = defaultTheme
+
+local url = "about:blank"
+
+local contentWindow = window.create(term.current(), 1, 2, w - 1, h - 2)
+local screenContent = {}
+
+local loading = false
+
+-- Scrolling state
+local scrollOffset = 0
+local contentLines = {} -- flattened, pre-wrapped lines: { text = ... }
+
+-- Scrollbar hit-testing state, recomputed every render
+local scrollbarVisible = false
+local scrollbarTrackHeight = 0
+local scrollbarThumbHeight = 0
+local scrollbarThumbPos = 0
+local draggingScrollbar = false
+local dragGrabOffset = 0
+
+
+
+
+local function fillLine(y, bg, fg, text)
+    term.setBackgroundColour(bg)
+    term.setTextColour(fg)
+    term.setCursorPos(1, y)
+    term.clearLine()
+
+    if text then
+        term.write(text)
+    end
+end
+
+
+
+
+
+
 local function buildContentLines()
     local lines = {}
     local width = select(1, contentWindow.getSize())
 
-    if #screenContent == 0 and #logs > 0 then
-        for _, err in ipairs(logs) do
-            local wrapped = wrapText("[" .. err["status"] .. "]: " .. err["message"], width)
+    if #screenContent == 0 and #core.logs > 0 then
+        for _, err in ipairs(core.logs) do
+            local wrapped = core.wrapText("[" .. err["status"] .. "]: " .. err["message"], width)
             for _, l in ipairs(wrapped) do
                 table.insert(lines, { text = l })
             end
@@ -113,7 +122,7 @@ local function buildContentLines()
     else
         for _, element in ipairs(screenContent) do
             if element["type"] == "text" then
-                local wrapped = wrapText(element["text"], width)
+                local wrapped = core.wrapText(element["text"], width)
                 for _, l in ipairs(wrapped) do
                     table.insert(lines, { text = l })
                 end
@@ -146,7 +155,7 @@ end
 local function preparePage(content)
     local json, err = textutils.unserialiseJSON(content)
     if not json then
-        consoleLog("error", "Failed to parse JSON: " .. err)
+        core.consoleLog("error", "Failed to parse JSON: " .. err)
         loading = false
         return
     end
@@ -162,24 +171,24 @@ local function preparePage(content)
     --     currErr = err2
     -- end
 
-    local body, ok3, err3 = checkVal(json["body"], "table", {})
+    local body, ok3, err3 = core.checkVal(json["body"], "table", {})
     if not ok3 then
-        consoleLog("error", "Failed to check body: " .. err3)
+        core.consoleLog("error", "Failed to check body: " .. err3)
         return false
     end
 
     screenContent = {}
 
     for _, element in ipairs(body) do
-        local elementType, ok4, err4 = checkVal(element["type"], "string", nil)
+        local elementType, ok4, err4 = core.checkVal(element["type"], "string", nil)
 
         if not ok4 then
-            consoleLog("error", "Failed to check element type: " .. err4)
+            core.consoleLog("error", "Failed to check element type: " .. err4)
         elseif elementType == "text" then
-            local text, ok5, err5 = checkVal(element["text"], "string", "")
+            local text, ok5, err5 = core.checkVal(element["text"], "string", "")
 
             if not ok5 then
-                consoleLog("error", "Failed to check text element: " .. err5)
+                core.consoleLog("error", "Failed to check text element: " .. err5)
             else
                 table.insert(screenContent, {
                     ["type"] = "text",
@@ -239,7 +248,7 @@ local function renderContent()
     contentWindow.clear()
 
     local cw, ch = contentWindow.getSize()
-    local errorMode = (#screenContent == 0 and #logs > 0)
+    local errorMode = (#screenContent == 0 and #core.logs > 0)
 
     for row = 1, ch do
         local line = contentLines[row + scrollOffset]
@@ -270,7 +279,7 @@ local function renderChrome()
     local status = "Ready"
     if loading then
         status = "Loading..."
-    elseif #screenContent == 0 and #logs > 0 then
+    elseif #screenContent == 0 and #core.logs > 0 then
         status = "Error"
     end
     fillLine(h, colors.lightGray, colors.black, status)
@@ -304,18 +313,18 @@ local function editValue(currentValue, prompt)
 end
 
 local function GET(sourceUrl)
-    if startsWith(sourceUrl, "file://") then
+    if core.startsWith(sourceUrl, "file://") then
         local fileName = shell.resolve(sourceUrl)
 
         if not fs.exists(fileName) then
-            consoleLog("error", "File not found: " .. fileName)
+            core.consoleLog("error", "File not found: " .. fileName)
             loading = false
             return
         end
 
         local file = fs.open(fileName, "r")
         if not file then
-            consoleLog("error", "Failed to open file: " .. fileName)
+            core.consoleLog("error", "Failed to open file: " .. fileName)
             loading = false
             return
         end
@@ -324,16 +333,16 @@ local function GET(sourceUrl)
         file.close()
 
         if not content then
-            consoleLog( "error", "Failed to read file: " .. fileName)
+            core.consoleLog( "error", "Failed to read file: " .. fileName)
             loading = false
             return
         end
 
         return content
-    elseif startsWith(sourceUrl, "http://") or startsWith(sourceUrl, "https://") then
+    elseif core.startsWith(sourceUrl, "http://") or core.startsWith(sourceUrl, "https://") then
         local request = http.get(sourceUrl)
         if not request then
-            consoleLog("error", "Failed to make HTTP request to: " .. sourceUrl)
+            core.consoleLog("error", "Failed to make HTTP request to: " .. sourceUrl)
             loading = false
             return
         end
@@ -345,9 +354,9 @@ local function GET(sourceUrl)
 
         if statusCode ~= 200 then
             if not content then
-                consoleLog("error", "HTTP request failed with status code: " .. statusCode)
+                core.consoleLog("error", "HTTP request failed with status code: " .. statusCode)
             else
-                consoleLog("error", content)
+                core.consoleLog("error", content)
             end
             loading = false
             request.close()
@@ -355,7 +364,7 @@ local function GET(sourceUrl)
         end
 
         if not content then
-            consoleLog("error", "Failed to read HTTP response from: " .. sourceUrl)
+            core.consoleLog("error", "Failed to read HTTP response from: " .. sourceUrl)
             loading = false
             return
         end
@@ -375,7 +384,7 @@ while true do
 
         if p3 == 1 and p2 >= 2 and p2 <= #url + 1 then
             url = editValue(url, "Enter URL:")
-            logs = {}
+            core.logs = {}
             loading = true
             scrollOffset = 0
             local content = GET(url)
