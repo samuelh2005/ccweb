@@ -301,9 +301,7 @@ function ContentFrame:render()
     self:refreshContentLines()
 
     self.contentWindow.setBackgroundColour(colors.white)
-
     self.contentWindow.setTextColour(colors.black)
-
     self.contentWindow.setCursorPos(1, 1)
     self.contentWindow.clear()
 
@@ -312,11 +310,8 @@ function ContentFrame:render()
 
         if line then
             self.contentWindow.setBackgroundColour(line.backgroundColor)
-
             self.contentWindow.setTextColour(line.textColor)
-
             self.contentWindow.setCursorPos(1, row)
-
             self.contentWindow.clearLine()
             self.contentWindow.write(line.text)
         end
@@ -529,14 +524,11 @@ local function editValue(currentValue, prompt)
 
     for row = 0, dialogH - 1 do
         term.setCursorPos(x, y + row)
-
         term.write(string.rep(" ", dialogW))
     end
 
     term.setCursorPos(x + 2, y + 1)
-
     term.write(prompt)
-
     term.setCursorPos(x + 2, y + 2)
 
     local newValue = read()
@@ -628,9 +620,7 @@ end
 local function fillLine(y, bg, fg, text)
     term.setBackgroundColour(bg)
     term.setTextColour(fg)
-
     term.setCursorPos(1, y)
-
     term.clearLine()
 
     if text then
@@ -651,9 +641,7 @@ local function renderChrome()
 
     term.setBackgroundColour(colors.gray)
     term.setTextColour(colors.white)
-
     term.setCursorPos(2, 1)
-
     term.write(url)
 
     ------------------------------------------------------------
@@ -675,7 +663,7 @@ renderChrome()
 contentFrame:render()
 
 while true do
-    local event, p1, p2, p3, p4, p5 = os.pullEvent()
+    local event, p1, p2, p3, p4, p5 = os.pullEventRaw()
 
     ------------------------------------------------------------
     -- Give ContentFrame first chance to consume the event.
@@ -720,6 +708,11 @@ while true do
                 end
             end
         elseif event == "terminate" then
+            term.setCursorPos(1, 1)
+            term.setBackgroundColour(colors.black)
+            term.setTextColour(colors.white)
+            term.clear()
+            print("Thanks for using CC Web Browser!")
             break
         end
     end
