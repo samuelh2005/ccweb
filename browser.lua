@@ -14,18 +14,6 @@ local core = {}
 
 core.logs = {}
 
-core.checkVal = function(value, arg_type, default)
-    if value == nil then
-        return default, false, "Value is nil"
-    end
-
-    if arg_type and type(value) ~= arg_type then
-        return default, false, "Expected type " .. arg_type .. ", got " .. type(value)
-    end
-
-    return value, true, nil
-end
-
 core.startsWith = function(str, prefix)
     return str:sub(1, #prefix) == prefix
 end
@@ -38,12 +26,13 @@ core.stripPrefix = function(str, prefix)
     return str
 end
 
-core.consoleLog = function(status, msg)
+core.consoleLog = function(status, message, traceback)
     table.insert(
         core.logs,
         {
-            ["status"] = status,
-            ["message"] = msg
+            status = status,
+            message = message,
+            traceback = traceback
         }
     )
 end
@@ -76,6 +65,23 @@ core.editValue = function(currentValue, prompt)
     end
 
     return currentValue
+end
+
+core.errorWarp = function(func)
+    return function(...)
+        local results = table.pack(
+            xpcall(func, function(message)
+                return message, debug.traceback(message, 2)
+            end, ...)
+        )
+
+        if results[1] then
+            return table.unpack(results, 2, results.n)
+        end
+
+        core.consoleLog("error", results[2], results[3])
+        return nil
+    end
 end
 
 ----------------------------------------------------------------
@@ -452,30 +458,32 @@ local network = {}
 -- GET
 ----------------------------------------------------------------
 
-network.GET = function(sourceUrl)
+network.GET = core.errorWarp(function(sourceUrl)
+    assert(type(sourceUrl) == "string", "network.GET expects a string")
+    assert(#sourceUrl > 0, "network.GET expects a non-empty string")
+    assert(
+        core.startsWith(sourceUrl, "file://") or core.startsWith(sourceUrl, "http://") or
+            core.startsWith(sourceUrl, "https://"),
+        "network.GET expects a URL starting with file://, http://, or https://"
+    )
+
     if core.startsWith(sourceUrl, "file://") then
         local fileName = shell.resolve(core.stripPrefix(sourceUrl, "file://"))
 
         if not fs.exists(fileName) then
-            core.consoleLog("error", "File not found: " .. fileName)
-            return false
+            error("File does not exist: " .. fileName)
         end
 
         local file = fs.open(fileName, "r")
 
-        if not file then
-            core.consoleLog("error", "Failed to open file: " .. fileName)
-            return false
-        end
+        assert(file, "Failed to open file: " .. fileName)
 
         local content = file.readAll()
 
         file.close()
 
-        if not content or #content == 0 then
-            core.consoleLog("error", "File is empty: " .. fileName)
-            return false
-        end
+        assert(content, "Failed to read file: " .. fileName)
+        assert(#content > 0, "File is empty: " .. fileName)
 
         return true, {
             content = content
@@ -483,32 +491,16 @@ network.GET = function(sourceUrl)
     elseif core.startsWith(sourceUrl, "http://") or core.startsWith(sourceUrl, "https://") then
         local request = http.get(sourceUrl)
 
-        if not request then
-            core.consoleLog("error", "Failed to make HTTP request to: " .. sourceUrl)
-            return false
-        end
+        assert(request, "Failed to make HTTP request to: " .. sourceUrl)
 
         local statusCode = request.getResponseCode()
-
         local headers = request.getResponseHeaders()
-
         local content = request.readAll()
 
         request.close()
 
-        if statusCode ~= 200 then
-            if not content then
-                core.consoleLog("error", "HTTP request failed with status code: " .. statusCode)
-            else
-                core.consoleLog("error", content)
-            end
-            return false
-        end
-
-        if not content or #content == 0 then
-            core.consoleLog("error", "HTTP response is empty for: " .. sourceUrl)
-            return false
-        end
+        assert(content, "Failed to read HTTP response from: " .. sourceUrl)
+        assert(#content > 0, "HTTP response is empty from: " .. sourceUrl)
 
         return true, {
             content = content,
@@ -516,10 +508,7 @@ network.GET = function(sourceUrl)
             headers = headers
         }
     end
-
-    core.consoleLog("error", "Unsupported URL scheme: " .. sourceUrl .. " Supported schemes are file://, http://, and https://")
-    return false
-end
+end)
 
 local browser = {}
 
@@ -617,57 +606,41 @@ end
 -- Page parsing
 ----------------------------------------------------------------
 
-browser.displayPage = function(content)
-    if not content then
-        core.consoleLog("error", "No content to display")
-        return false
-    end
-
+browser.displayPage = core.errorWarp(function(content)
+    assert(type(content) == "string", "browser.displayPage expects a string")
+    assert(#content > 0, "browser.displayPage expects a non-empty string")
     local json, err = textutils.unserialiseJSON(content)
-
     if not json then
-        core.consoleLog("error", "Failed to parse JSON: " .. err)
-        return false
+        error(err)
     end
-
-    local body, ok, bodyErr = core.checkVal(json["body"], "table", {})
-
-    if not ok then
-        core.consoleLog("error", "Failed to check body: " .. bodyErr)
-        return false
-    end
+    assert(type(json["body"]) == "table", "Failed to check body: body is not a table")
 
     -- The parsed document does not need to be stored anywhere.
     -- Its elements are translated straight into ContentFrame
     -- line objects.
     browser.contentFrame:clearLines()
 
-    for _, element in ipairs(body) do
-        local elementType, typeOK, typeErr = core.checkVal(element["type"], "string", nil)
+    for _, element in ipairs(json["body"]) do
+        assert(type(element) == "table", "Element must be a table")
+        assert(type(element.type) == "string", "Element must have a type field")
 
-        if not typeOK then
-            core.consoleLog("error", "Failed to check element type: " .. typeErr)
-        elseif elementType == "text" then
-            local text, textOK, textErr = core.checkVal(element["text"], "string", "")
-
-            if not textOK then
-                core.consoleLog("error", "Failed to check text element: " .. textErr)
-            else
-                browser.contentFrame:pushLine(
-                    {
-                        text = text,
-                        textColor = colors.black,
-                        backgroundColor = colors.white
-                    }
-                )
-            end
+        if element.type == "text" then
+            assert(type(element.text) == "string", "Text element requires a text field")
+            assert(#element.text > 0, "Text element requires a non-empty text field")
+            browser.contentFrame:pushLine(
+                {
+                    text = element.text,
+                    textColor = colors.black,
+                    backgroundColor = colors.white
+                }
+            )
         end
     end
 
     browser.contentFrame:scrollToTop()
 
     return true
-end
+end)
 
 ----------------------------------------------------------------
 -- Browser chrome
