@@ -108,17 +108,10 @@ end
 local ContentFrame = {}
 ContentFrame.__index = ContentFrame
 
-function ContentFrame.new(parentTerm, x, y, width, height)
+function ContentFrame.new(target)
     local self = setmetatable({}, ContentFrame)
 
-    self.term = parentTerm
-
-    self.x = x
-    self.y = y
-    self.width = width
-    self.height = height
-
-    self.contentWindow = window.create(parentTerm, x, y, width, height)
+    self.contentWindow = target
 
     -- Original line objects.
     --
@@ -204,9 +197,15 @@ end
 
 function ContentFrame:buildContentLines()
     local lines = {}
+    local width, _ = self.contentWindow.getSize()
 
     for _, line in ipairs(self.lines) do
-        local wrapped = self:wrapText(line.text, self.width)
+        local textMaxWidth = width
+        if self.scrollbarVisible then
+            textMaxWidth = width - 1
+        end
+
+        local wrapped = self:wrapText(line.text, textMaxWidth)
 
         for _, text in ipairs(wrapped) do
             table.insert(
@@ -231,7 +230,8 @@ end
 ----------------------------------------------------------------
 
 function ContentFrame:maxScroll()
-    return math.max(0, #self.contentLines - self.height)
+    local _, height = self.contentWindow.getSize()
+    return math.max(0, #self.contentLines - height)
 end
 
 function ContentFrame:clampScroll()
@@ -272,12 +272,8 @@ end
 -- Sizing
 ----------------------------------------------------------------
 
-function ContentFrame:setSize(width, height)
-    self.width = width
-    self.height = height
-
-    self.contentWindow.reposition(self.x, self.y, width, height)
-
+function ContentFrame:reposition(x, y, width, height)
+    self.contentWindow.reposition(x, y, width, height)
     self:refreshContentLines()
 end
 
@@ -286,22 +282,21 @@ end
 ----------------------------------------------------------------
 
 function ContentFrame:renderScrollbar()
-    local x = self.x + self.width
+    local width, height = self.contentWindow.getSize()
+
     local total = #self.contentLines
-    local trackHeight = self.height
+    self.scrollbarTrackHeight = height
 
-    self.scrollbarTrackHeight = trackHeight
-
-    if total <= trackHeight then
+    if total <= height then
         self.scrollbarVisible = false
         self.scrollbarThumbHeight = 0
         self.scrollbarThumbPos = 0
 
-        self.term.setBackgroundColour(colors.white)
+        self.contentWindow.setBackgroundColour(colors.white)
 
-        for row = 0, trackHeight - 1 do
-            self.term.setCursorPos(x, self.y + row)
-            self.term.write(" ")
+        for row = 1, height do
+            self.contentWindow.setCursorPos(width, row)
+            self.contentWindow.write(" ")
         end
 
         return
@@ -309,9 +304,9 @@ function ContentFrame:renderScrollbar()
 
     self.scrollbarVisible = true
 
-    self.scrollbarThumbHeight = math.max(1, math.floor(trackHeight * trackHeight / total))
+    self.scrollbarThumbHeight = math.max(1, math.floor(height * height / total))
 
-    local travel = trackHeight - self.scrollbarThumbHeight
+    local travel = height - self.scrollbarThumbHeight
 
     local max = self:maxScroll()
 
@@ -321,16 +316,14 @@ function ContentFrame:renderScrollbar()
         self.scrollbarThumbPos = math.floor(travel * self.scrollOffset / max + 0.5)
     end
 
-    for row = 0, trackHeight - 1 do
-        self.term.setCursorPos(x, self.y + row)
-
-        if row >= self.scrollbarThumbPos and row < self.scrollbarThumbPos + self.scrollbarThumbHeight then
-            self.term.setBackgroundColour(colors.gray)
+    for row = 1, height do
+        self.contentWindow.setCursorPos(width, row)
+        if (row - 1) >= self.scrollbarThumbPos and (row - 1) < self.scrollbarThumbPos + self.scrollbarThumbHeight then
+            self.contentWindow.setBackgroundColour(colors.gray)
         else
-            self.term.setBackgroundColour(colors.lightGray)
+            self.contentWindow.setBackgroundColour(colors.lightGray)
         end
-
-        self.term.write(" ")
+        self.contentWindow.write(" ")
     end
 end
 
@@ -339,23 +332,20 @@ function ContentFrame:render()
     -- rebuilds the wrapped representation from the original lines.
     self:refreshContentLines()
 
+    local _, height = self.contentWindow.getSize()
+
     self.contentWindow.setBackgroundColour(colors.white)
-
     self.contentWindow.setTextColour(colors.black)
-
     self.contentWindow.setCursorPos(1, 1)
     self.contentWindow.clear()
 
-    for row = 1, self.height do
+    for row = 1, height do
         local line = self.contentLines[row + self.scrollOffset]
 
         if line then
             self.contentWindow.setBackgroundColour(line.backgroundColor)
-
             self.contentWindow.setTextColour(line.textColor)
-
             self.contentWindow.setCursorPos(1, row)
-
             self.contentWindow.clearLine()
             self.contentWindow.write(line.text)
         end
@@ -369,34 +359,30 @@ end
 ----------------------------------------------------------------
 
 function ContentFrame:handleEvent(event, p1, p2, p3)
+    local width, height = self.contentWindow.getSize()
+
     if event == "mouse_click" and p1 == 1 then
         local mouseX = p2
         local mouseY = p3
 
-        local scrollbarX = self.x + self.width
-
         if
-            self.scrollbarVisible and mouseX == scrollbarX and mouseY >= self.y and
-                mouseY < self.y + self.scrollbarTrackHeight
-         then
+            self.scrollbarVisible and mouseX == width and mouseY < self.scrollbarTrackHeight
+        then
             self:refreshContentLines()
 
-            local row = mouseY - self.y
-
             -- Clicked the scrollbar thumb.
-            if row >= self.scrollbarThumbPos and row < self.scrollbarThumbPos + self.scrollbarThumbHeight then
+            if mouseY >= self.scrollbarThumbPos and mouseY < self.scrollbarThumbPos + self.scrollbarThumbHeight then
                 -- Clicked the scrollbar track.
                 self.draggingScrollbar = true
 
-                self.dragGrabOffset = row - self.scrollbarThumbPos
+                self.dragGrabOffset = mouseY - self.scrollbarThumbPos
             else
                 local travel = self.scrollbarTrackHeight - self.scrollbarThumbHeight
 
-                local target = row - math.floor(self.scrollbarThumbHeight / 2)
+                local target = mouseY - math.floor(self.scrollbarThumbHeight / 2)
 
                 if travel > 0 then
                     self.scrollOffset = math.floor(self:maxScroll() * target / travel + 0.5)
-
                     self:clampScroll()
                 end
             end
@@ -409,7 +395,7 @@ function ContentFrame:handleEvent(event, p1, p2, p3)
         local travel = self.scrollbarTrackHeight - self.scrollbarThumbHeight
 
         if travel > 0 then
-            local row = p3 - self.y - self.dragGrabOffset
+            local row = p3 - self.dragGrabOffset
 
             self.scrollOffset = math.floor(self:maxScroll() * row / travel + 0.5)
 
@@ -429,9 +415,9 @@ function ContentFrame:handleEvent(event, p1, p2, p3)
         elseif p1 == keys.up then
             self:scrollBy(-1)
         elseif p1 == keys.pageDown then
-            self:scrollBy(self.height)
+            self:scrollBy(height)
         elseif p1 == keys.pageUp then
-            self:scrollBy(-self.height)
+            self:scrollBy(-height)
         elseif p1 == keys.home then
             self:scrollToTop()
         elseif p1 == keys["end"] then
@@ -439,12 +425,6 @@ function ContentFrame:handleEvent(event, p1, p2, p3)
         else
             return false
         end
-
-        return true
-    elseif event == "term_resize" then
-        local width, height = self.term.getSize()
-
-        self:setSize(width - 1, height - 2)
 
         return true
     end
@@ -534,7 +514,8 @@ end
 
 browser.loading = false
 
-browser.contentFrame = ContentFrame.new(term.current(), 1, 2, browser.w - 1, browser.h - 2)
+browser.contentWindow = window.create(term.current(), 1, 2, browser.w, browser.h - 2)
+browser.contentFrame = ContentFrame.new(browser.contentWindow)
 
 ----------------------------------------------------------------
 -- Browser content
@@ -711,15 +692,18 @@ while true do
     local handled = browser.contentFrame:handleEvent(event, p1, p2, p3)
 
     if not handled then
-        --------------------------------------------------------
-        -- URL bar
-        --------------------------------------------------------
-
         if event == "mouse_click" and p1 == 1 then
+            --------------------------------------------------------
+            -- URL bar
+            --------------------------------------------------------
             if p3 == 1 and p2 >= 2 and p2 <= #browser.url + 1 then
                 browser.url = core.editValue(browser.url, "Enter URL:")
                 browser.navigate(browser.url)
             end
+        elseif event == "term_resize" then
+            local width, height = term.getSize()
+            browser.contentFrame:reposition(1, 2, width, height - 2)
+            return true
         elseif event == "terminate" then
             term.setCursorPos(1, 1)
             term.setBackgroundColour(colors.black)
@@ -729,7 +713,6 @@ while true do
             break
         end
     end
-
 
     browser.renderChrome()
     browser.contentFrame:render()
